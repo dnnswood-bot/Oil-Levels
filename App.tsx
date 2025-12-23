@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { LayoutDashboard, Droplets, Truck, History, Sparkles, TrendingUp, Plus, X, Trash2 } from 'lucide-react';
 import { 
@@ -6,7 +5,7 @@ import {
 } from 'recharts';
 import { OilEntry, EntryType, UsageStats } from './types';
 import { LITERS_PER_CM, STORAGE_KEY, COLORS } from './constants';
-import { getOilInsights } from './services/geminiService';
+import { getOilInsights } from './geminiService'; // Updated path
 
 const MAX_TANK_HEIGHT_CM = 100;
 
@@ -28,7 +27,11 @@ const App: React.FC = () => {
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) {
-      setEntries(JSON.parse(saved));
+      try {
+        setEntries(JSON.parse(saved));
+      } catch (e) {
+        console.error("Failed to parse stored data", e);
+      }
     }
   }, []);
 
@@ -40,10 +43,16 @@ const App: React.FC = () => {
   }, [entries]);
 
   const handleGetInsights = async () => {
+    if (isGenerating) return;
     setIsGenerating(true);
-    const result = await getOilInsights(entries);
-    setInsights(result || "Add more data to see trends.");
-    setIsGenerating(false);
+    try {
+      const result = await getOilInsights(entries);
+      setInsights(result || "Add more data to see trends.");
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setIsGenerating(false);
+    }
   };
 
   const addEntry = () => {
@@ -121,7 +130,7 @@ const App: React.FC = () => {
   }, [entries]);
 
   return (
-    <div className="min-h-screen pb-10 px-4 md:px-8">
+    <div className="min-h-screen pb-10 px-4 md:px-8 bg-slate-950 text-slate-50">
       {/* Header */}
       <header className="py-6 flex flex-col md:flex-row justify-between items-start md:items-center max-w-7xl mx-auto gap-4">
         <div>
@@ -152,7 +161,6 @@ const App: React.FC = () => {
         <div className="lg:col-span-8 space-y-6">
           
           <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-             {/* Oil Tank Visualizer */}
              <div className="md:col-span-5 glass-panel p-6 rounded-2xl flex flex-col items-center justify-center purple-glow">
                 <h3 className="text-[10px] font-bold text-slate-500 mb-6 uppercase tracking-[0.2em] text-center">Live Tank Volume</h3>
                 <OilTank levelCm={currentLevelCm} />
@@ -162,7 +170,6 @@ const App: React.FC = () => {
                 </div>
              </div>
 
-             {/* Stats Summary */}
              <div className="md:col-span-7 flex flex-col gap-4">
                <div className="grid grid-cols-2 gap-3 h-full">
                   <StatCard 
@@ -203,7 +210,7 @@ const App: React.FC = () => {
               <Sparkles size={14} />
               Consumption Intelligence
             </h2>
-            <div className="text-slate-300 text-sm leading-relaxed">
+            <div className="text-slate-300 text-sm leading-relaxed min-h-[40px]">
               {isGenerating ? (
                 <div className="flex items-center gap-3 animate-pulse text-xs text-slate-500">
                   <div className="flex gap-1">
@@ -267,7 +274,7 @@ const App: React.FC = () => {
               </h2>
               <span className="text-[10px] bg-slate-800 px-2 py-0.5 rounded-full text-orange-400 font-bold">{entries.length}</span>
             </div>
-            <div className="overflow-y-auto max-h-[500px] lg:max-h-none flex-1 p-3 space-y-3 custom-scrollbar">
+            <div className="overflow-y-auto max-h-[500px] lg:max-h-none flex-1 p-3 space-y-3">
               {entries.length === 0 ? (
                 <div className="text-center py-20 text-slate-600">
                   <p className="text-sm">No activity recorded</p>
@@ -286,7 +293,7 @@ const App: React.FC = () => {
       {isModalOpen && (
         <div className="fixed inset-0 z-[100] flex items-end md:items-center justify-center p-0 md:p-4">
           <div className="absolute inset-0 bg-black/90 backdrop-blur-md" onClick={() => setIsModalOpen(false)}></div>
-          <div className="relative w-full max-w-md bg-slate-900 border-t md:border border-slate-800 rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden pb-10 md:pb-0 animate-in slide-in-from-bottom duration-300">
+          <div className="relative w-full max-w-md bg-slate-900 border-t md:border border-slate-800 rounded-t-3xl md:rounded-3xl shadow-2xl overflow-hidden pb-10 md:pb-0">
             <div className="p-6">
               <div className="flex justify-between items-center mb-8">
                 <h3 className="text-lg font-black flex items-center gap-3 tracking-tight">
@@ -298,14 +305,14 @@ const App: React.FC = () => {
                 </button>
               </div>
 
-              <div className="space-y-5">
+              <div className="space-y-5 text-slate-50">
                 <div>
                   <label className="block text-[10px] font-bold text-slate-500 mb-2 uppercase tracking-widest">Transaction Date</label>
                   <input 
                     type="date" 
                     value={date} 
                     onChange={e => setDate(e.target.value)}
-                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-white focus:outline-none focus:ring-2 focus:ring-violet-500/50 appearance-none"
+                    className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-white focus:outline-none appearance-none"
                   />
                 </div>
 
@@ -320,7 +327,7 @@ const App: React.FC = () => {
                         placeholder="0"
                         max={100}
                         onChange={e => setLevelCm(e.target.value)}
-                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-3xl font-bold text-white focus:outline-none focus:ring-2 focus:ring-violet-500/50"
+                        className="w-full bg-slate-800 border border-slate-700 rounded-xl px-4 py-3.5 text-3xl font-bold text-white focus:outline-none"
                       />
                       <span className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 font-bold">CM</span>
                     </div>
@@ -368,8 +375,8 @@ const App: React.FC = () => {
                   disabled={modalType === EntryType.READING ? !levelCm : !liters}
                   className={`w-full py-4 rounded-2xl font-black text-lg transition-all shadow-xl active:scale-95 disabled:opacity-30 ${
                     modalType === EntryType.READING 
-                    ? 'bg-violet-600 shadow-violet-500/20' 
-                    : 'bg-orange-600 shadow-orange-500/20'
+                    ? 'bg-violet-600 text-white' 
+                    : 'bg-orange-600 text-white'
                   }`}
                 >
                   Confirm & Save
@@ -389,16 +396,12 @@ const OilTank: React.FC<{ levelCm: number }> = ({ levelCm }) => {
   
   return (
     <div className="relative w-36 h-56 md:w-40 md:h-64">
-      {/* Tank Body */}
       <div className="absolute inset-0 bg-green-950 border-[6px] border-green-900 rounded-[2rem] overflow-hidden shadow-2xl flex flex-col justify-end">
-        {/* The Ribs */}
         <div className="absolute inset-0 flex flex-col justify-evenly opacity-10 pointer-events-none">
           {[...Array(6)].map((_, i) => (
             <div key={i} className="w-full h-px bg-white"></div>
           ))}
         </div>
-
-        {/* Oil Level */}
         <div 
           className="bg-gradient-to-t from-green-600 to-green-400 w-full transition-all duration-1000 ease-out relative shadow-[0_-10px_30px_rgba(34,197,94,0.4)]"
           style={{ height: `${percentage}%` }}
@@ -406,16 +409,10 @@ const OilTank: React.FC<{ levelCm: number }> = ({ levelCm }) => {
           <div className="absolute top-0 left-0 w-full h-2 bg-white/30 blur-[2px]"></div>
         </div>
       </div>
-
-      {/* Accessories */}
       <div className="absolute -top-3 left-1/4 w-10 h-5 bg-green-900 rounded-t-lg border-green-800"></div>
       <div className="absolute -top-2 right-1/4 w-6 h-4 bg-green-900 rounded-full border border-green-800"></div>
-
-      {/* Legs */}
       <div className="absolute -bottom-3 left-8 w-4 h-6 bg-slate-900 rounded-b-md"></div>
       <div className="absolute -bottom-3 right-8 w-4 h-6 bg-slate-900 rounded-b-md"></div>
-
-      {/* Ruler */}
       <div className="absolute -right-8 inset-y-0 flex flex-col justify-between text-[8px] text-slate-600 font-black py-4">
         <span>100</span>
         <span>75</span>
