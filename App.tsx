@@ -1,10 +1,31 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { 
+  Droplets, 
+  Truck, 
+  TrendingUp, 
+  History, 
+  Plus, 
+  X, 
+  Trash2, 
+  Zap, 
+  Calendar, 
+  AlertCircle 
+} from 'lucide-react';
+import { 
+  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
+} from 'recharts';
+import { OilEntry, EntryType, UsageStats } from './types';
+import { LITERS_PER_CM, STORAGE_KEY } from './constants';
+import { getOilInsights } from './geminiService';
+
+const MAX_TANK_HEIGHT_CM = 120; // Default standard tank height
 
 const App: React.FC = () => {
   const [entries, setEntries] = useState<OilEntry[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [modalType, setModalType] = useState<EntryType>(EntryType.READING);
-  const [insights, setInsights] = useState<string>('Logging your first entries will enable AI predictions...');
-  const [isGenerating, setIsGenerating] = useState(false);
+  const [insights, setInsights] = useState<string>('');
+  const [isLoadingInsights, setIsLoadingInsights] = useState(false);
 
   // Form State
   const [date, setDate] = useState(new Date().toISOString().split('T')[0]);
@@ -15,56 +36,41 @@ const App: React.FC = () => {
 
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
-    if (saved) {
-      try {
-        setEntries(JSON.parse(saved));
-      } catch (e) {
-        console.error("Failed to parse stored data", e);
-      }
-    }
+    if (saved) setEntries(JSON.parse(saved));
   }, []);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
-    if (entries.length > 1) {
-      handleGetInsights();
-    }
+    if (entries.length >= 2) generateInsights();
   }, [entries]);
 
-  const handleGetInsights = async () => {
-    if (isGenerating) return;
-    setIsGenerating(true);
+  const generateInsights = async () => {
+    setIsLoadingInsights(true);
     try {
-      const result = await getOilInsights(entries);
-      setInsights(result || "Dashboard analysis complete.");
-    } catch (err) {
-      console.error(err);
+      const text = await getOilInsights(entries);
+      setInsights(text);
+    } catch (e) {
+      console.error(e);
     } finally {
-      setIsGenerating(false);
+      setIsLoadingInsights(false);
     }
   };
 
-  const addEntry = () => {
-    const val = parseFloat(levelCm);
-    const litVal = parseFloat(liters);
-    
+  const handleAddEntry = () => {
     const newEntry: OilEntry = {
       id: crypto.randomUUID(),
       date,
       type: modalType,
-      levelCm: modalType === EntryType.READING ? val : undefined,
-      liters: modalType === EntryType.READING ? val * LITERS_PER_CM : litVal,
+      levelCm: modalType === EntryType.READING ? parseFloat(levelCm) : undefined,
+      liters: modalType === EntryType.READING ? parseFloat(levelCm) * LITERS_PER_CM : parseFloat(liters),
       cost: modalType === EntryType.DELIVERY ? parseFloat(cost) : undefined,
       note: modalType === EntryType.DELIVERY ? note : undefined,
     };
 
-    setEntries(prev => [...prev, newEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime()));
+    const updated = [...entries, newEntry].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+    setEntries(updated);
     setIsModalOpen(false);
     resetForm();
-  };
-
-  const deleteEntry = (id: string) => {
-    setEntries(prev => prev.filter(e => e.id !== id));
   };
 
   const resetForm = () => {
@@ -76,212 +82,221 @@ const App: React.FC = () => {
   };
 
   const stats = useMemo<UsageStats>(() => {
-    const sorted = [...entries].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-    const latestReading = [...sorted].reverse().find(e => e.type === EntryType.READING);
-    const totalSpent = entries.reduce((acc, e) => acc + (e.cost || 0), 0);
+    const readings = entries.filter(e => e.type === EntryType.READING);
+    const deliveries = entries.filter(e => e.type === EntryType.DELIVERY);
     
-    let avgUsage = 0;
-    if (sorted.length >= 2) {
-      const readings = sorted.filter(e => e.type === EntryType.READING);
-      if (readings.length >= 2) {
-        const first = readings[0];
-        const last = readings[readings.length - 1];
-        const dayDiff = (new Date(last.date).getTime() - new Date(first.date).getTime()) / (1000 * 3600 * 24);
-        
-        const deliveriesInBetween = sorted.filter(e => 
-          e.type === EntryType.DELIVERY && 
-          new Date(e.date) >= new Date(first.date) && 
-          new Date(e.date) <= new Date(last.date)
-        ).reduce((acc, e) => acc + (e.liters || 0), 0);
+    const totalSpent = deliveries.reduce((sum, e) => sum + (e.cost || 0), 0);
+    const latestReading = [...readings].reverse()[0];
+    
+    let avgDaily = 0;
+    if (readings.length >= 2) {
+      const first = readings[0];
+      const last = readings[readings.length - 1];
+      const days = (new Date(last.date).getTime() - new Date(first.date).getTime()) / (1000 * 3600 * 24);
+      
+      const deliveriesInWindow = deliveries.filter(d => 
+        new Date(d.date) >= new Date(first.date) && new Date(d.date) <= new Date(last.date)
+      ).reduce((sum, d) => sum + (d.liters || 0), 0);
 
-        const totalUsed = (first.liters || 0) + deliveriesInBetween - (last.liters || 0);
-        avgUsage = dayDiff > 0 ? totalUsed / dayDiff : 0;
-      }
+      const totalConsumed = (first.liters || 0) + deliveriesInWindow - (last.liters || 0);
+      avgDaily = days > 0 ? totalConsumed / days : 0;
     }
 
     return {
       totalSpent,
-      avgDailyUsage: Math.max(0, avgUsage),
+      avgDailyUsage: avgDaily,
       currentLevelLiters: latestReading?.liters || 0,
-      estimatedDaysRemaining: avgUsage > 0 ? (latestReading?.liters || 0) / avgUsage : 0
+      estimatedDaysRemaining: avgDaily > 0 ? (latestReading?.liters || 0) / avgDaily : 0
     };
-  }, [entries]);
-
-  const currentLevelCm = useMemo(() => {
-    const latestReading = [...entries].reverse().find(e => e.type === EntryType.READING);
-    return latestReading?.levelCm || 0;
   }, [entries]);
 
   const chartData = useMemo(() => {
     return entries.filter(e => e.type === EntryType.READING).map(e => ({
-      name: new Date(e.date).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' }),
+      date: new Date(e.date).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' }),
       liters: e.liters,
       cm: e.levelCm
     }));
   }, [entries]);
 
   return (
-    <div className="min-h-screen pb-10 px-4 md:px-8 bg-slate-950 text-slate-50 selection:bg-purple-500/30">
-      <header className="py-6 flex flex-col md:flex-row justify-between items-start md:items-center max-w-7xl mx-auto gap-4">
-        <div>
-          <h1 className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-violet-500 to-orange-500 bg-clip-text text-transparent">
+    <div className="min-h-screen bg-slate-950 text-slate-100 p-4 md:p-8 lg:p-12 selection:bg-purple-500/30">
+      {/* Header */}
+      <header className="max-w-7xl mx-auto mb-12 flex flex-col md:flex-row justify-between items-start md:items-center gap-6">
+        <div className="space-y-1">
+          <h1 className="text-3xl font-black tracking-tight bg-gradient-to-br from-purple-400 via-violet-400 to-orange-400 bg-clip-text text-transparent">
             OilTrack Pro
           </h1>
-          <p className="text-purple-400 text-[10px] md:text-xs mt-1 uppercase tracking-[0.2em] font-bold">Smart Heating Management</p>
+          <p className="text-slate-500 text-xs font-bold uppercase tracking-[0.25em]">Heating Management System</p>
         </div>
-        <div className="flex gap-2 w-full md:w-auto">
+        <div className="flex gap-3 w-full md:w-auto">
           <button 
             onClick={() => { setModalType(EntryType.READING); setIsModalOpen(true); }}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-slate-900 border border-violet-500/30 text-violet-400 px-4 py-3 rounded-xl hover:bg-violet-500/10 transition-all text-sm font-bold"
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-violet-600 hover:bg-violet-500 text-white font-bold py-3 px-6 rounded-2xl transition-all shadow-lg shadow-violet-900/20 active:scale-95"
           >
-            <Droplets size={16} className="text-orange-500" /> Reading
+            <Droplets size={18} /> Log Reading
           </button>
           <button 
             onClick={() => { setModalType(EntryType.DELIVERY); setIsModalOpen(true); }}
-            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-slate-900 border border-orange-500/30 text-orange-400 px-4 py-3 rounded-xl hover:bg-orange-500/10 transition-all text-sm font-bold"
+            className="flex-1 md:flex-none flex items-center justify-center gap-2 bg-orange-600 hover:bg-orange-500 text-white font-bold py-3 px-6 rounded-2xl transition-all shadow-lg shadow-orange-900/20 active:scale-95"
           >
-            <Truck size={16} className="text-violet-400" /> Delivery
+            <Truck size={18} /> New Delivery
           </button>
         </div>
       </header>
 
-      <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6">
-        <div className="lg:col-span-8 space-y-6">
-          <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-             <div className="md:col-span-5 glass-panel p-8 rounded-[2rem] flex flex-col items-center justify-center purple-glow border-violet-500/10">
-                <h3 className="text-[10px] font-bold text-slate-500 mb-8 uppercase tracking-[0.3em] text-center">Live Tank Volume</h3>
-                <OilTank levelCm={currentLevelCm} />
-                <div className="mt-8 text-center">
-                  <span className="text-4xl font-black text-green-400 tracking-tighter">{currentLevelCm}<span className="text-sm ml-1 font-normal text-slate-500">cm</span></span>
-                  <p className="text-[10px] text-slate-500 uppercase font-bold mt-1 tracking-widest">Vertical Capacity</p>
-                </div>
-             </div>
-             <div className="md:col-span-7 flex flex-col gap-4">
-               <div className="grid grid-cols-2 gap-4 h-full">
-                  <StatCard label="Current" value={`${stats.currentLevelLiters.toFixed(0)}L`} subValue={`${(stats.currentLevelLiters / LITERS_PER_CM).toFixed(1)} cm`} icon={<Droplets size={20} className="text-orange-500" />} color="purple" />
-                  <StatCard label="Total Cost" value={`£${stats.totalSpent.toLocaleString()}`} subValue="Lifetime spend" icon={<TrendingUp size={20} className="text-violet-500" />} color="orange" />
-                  <StatCard label="Daily Avg" value={`${stats.avgDailyUsage.toFixed(1)}L`} subValue="Burn rate" icon={<History size={20} className="text-orange-500" />} color="purple" />
-                  <StatCard label="Heat Days" value={`${Math.round(stats.estimatedDaysRemaining)}`} subValue="Days remaining" icon={<Sparkles size={20} className="text-violet-500" />} color="orange" />
-               </div>
-             </div>
+      <main className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+        
+        {/* Left Column: Stats & Tank */}
+        <div className="lg:col-span-8 space-y-8">
+          
+          {/* Quick Stats Grid */}
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <StatCard label="In Tank" value={`${stats.currentLevelLiters.toFixed(0)}L`} sub={`${(stats.currentLevelLiters / LITERS_PER_CM).toFixed(1)}cm`} color="purple" icon={<Droplets size={20}/>} />
+            <StatCard label="Spend" value={`£${stats.totalSpent.toLocaleString()}`} sub="Total lifetime" color="orange" icon={<TrendingUp size={20}/>} />
+            <StatCard label="Daily Avg" value={`${stats.avgDailyUsage.toFixed(1)}L`} sub="Estimated" color="purple" icon={<Zap size={20}/>} />
+            <StatCard label="Longevity" value={stats.estimatedDaysRemaining > 0 ? `${Math.round(stats.estimatedDaysRemaining)}d` : 'N/A'} sub="Until empty" color="orange" icon={<Calendar size={20}/>} />
           </div>
 
-          <div className="glass-panel p-6 rounded-3xl orange-glow relative overflow-hidden border-orange-500/10">
-            <h2 className="text-[10px] font-black flex items-center gap-2 mb-4 text-orange-400 uppercase tracking-[0.2em]"><Sparkles size={14} /> AI Intelligence Engine</h2>
-            <div className="text-slate-200 text-sm leading-relaxed min-h-[50px] font-medium">
-              {isGenerating ? (
-                <div className="flex items-center gap-3 animate-pulse text-xs text-slate-500">
-                  <div className="flex gap-1">
-                    <div className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-bounce"></div>
-                    <div className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-bounce delay-75"></div>
-                    <div className="w-1.5 h-1.5 bg-orange-500 rounded-full animate-bounce delay-150"></div>
-                  </div>
-                  Analyzing consumption patterns and supply chain pricing...
+          <div className="grid grid-cols-1 md:grid-cols-12 gap-8">
+            {/* Visual Tank */}
+            <div className="md:col-span-4 glass rounded-[2.5rem] p-8 flex flex-col items-center justify-center purple-glow">
+              <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500 mb-8">Capacity State</span>
+              <TankVisual levelCm={entries.length > 0 ? (stats.currentLevelLiters / LITERS_PER_CM) : 0} />
+              <div className="mt-8 text-center">
+                <p className="text-3xl font-black text-white">{entries.length > 0 ? (stats.currentLevelLiters / LITERS_PER_CM).toFixed(1) : '0'}<span className="text-sm font-medium text-slate-500 ml-1">cm</span></p>
+                <p className="text-[10px] font-bold text-slate-600 uppercase tracking-widest mt-1">Height Index</p>
+              </div>
+            </div>
+
+            {/* Consumption Chart */}
+            <div className="md:col-span-8 glass rounded-[2.5rem] p-8 purple-glow overflow-hidden">
+              <div className="flex justify-between items-center mb-8">
+                <h3 className="text-xs font-black uppercase tracking-[0.2em] text-violet-400">12-Month Level Trend</h3>
+              </div>
+              <div className="h-[250px] w-full">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData}>
+                    <defs>
+                      <linearGradient id="usageGradient" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="5%" stopColor="#8b5cf6" stopOpacity={0.3}/>
+                        <stop offset="95%" stopColor="#8b5cf6" stopOpacity={0}/>
+                      </linearGradient>
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
+                    <XAxis dataKey="date" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} dy={10} />
+                    <YAxis stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
+                    <Tooltip 
+                      contentStyle={{ background: '#0f172a', border: '1px solid #334155', borderRadius: '12px', fontSize: '11px' }}
+                      itemStyle={{ color: '#8b5cf6', fontWeight: 'bold' }}
+                    />
+                    <Area type="monotone" dataKey="liters" stroke="#8b5cf6" strokeWidth={3} fillOpacity={1} fill="url(#usageGradient)" />
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          </div>
+
+          {/* AI Insights Section */}
+          <div className="glass rounded-[2.5rem] p-8 orange-glow border-orange-500/10">
+            <h3 className="text-[10px] font-black uppercase tracking-[0.3em] text-orange-400 mb-4 flex items-center gap-2">
+              <Zap size={14} /> AI Analysis Engine
+            </h3>
+            <div className="text-slate-300 text-sm leading-relaxed font-medium min-h-[40px]">
+              {isLoadingInsights ? (
+                <div className="flex gap-1 items-center animate-pulse text-slate-500">
+                  <div className="w-1 h-1 bg-orange-500 rounded-full animate-bounce"></div>
+                  <div className="w-1 h-1 bg-orange-500 rounded-full animate-bounce [animation-delay:0.2s]"></div>
+                  <div className="w-1 h-1 bg-orange-500 rounded-full animate-bounce [animation-delay:0.4s]"></div>
+                  <span className="ml-2 text-[10px] uppercase font-bold tracking-widest">Generating predictions...</span>
                 </div>
               ) : (
-                <span className="text-slate-300 md:text-sm">{insights}</span>
+                insights || "Log at least two readings to unlock usage forecasting and delivery reminders."
               )}
-            </div>
-          </div>
-
-          <div className="glass-panel p-8 rounded-[2rem] purple-glow border-violet-500/10">
-            <div className="flex justify-between items-center mb-8">
-              <h2 className="text-[10px] font-black flex items-center gap-2 uppercase tracking-[0.3em] text-violet-400"><LayoutDashboard size={16} /> 12-Month Usage Trend</h2>
-            </div>
-            <div className="h-[240px] md:h-[300px] w-full">
-              <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
-                  <defs>
-                    <linearGradient id="colorLiters" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor={COLORS.purple} stopOpacity={0.4}/>
-                      <stop offset="95%" stopColor={COLORS.purple} stopOpacity={0}/>
-                    </linearGradient>
-                  </defs>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#1e293b" />
-                  <XAxis dataKey="name" stroke="#475569" fontSize={10} tickLine={false} axisLine={false} dy={10} />
-                  <YAxis stroke="#475569" fontSize={10} tickLine={false} axisLine={false} />
-                  <Tooltip 
-                    contentStyle={{ backgroundColor: '#0f172a', border: '1px solid #1e293b', borderRadius: '16px', fontSize: '11px', boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)' }}
-                    itemStyle={{ color: COLORS.purple, fontWeight: 'bold' }}
-                    labelStyle={{ color: '#94a3b8', marginBottom: '4px' }}
-                  />
-                  <Area type="monotone" dataKey="liters" stroke={COLORS.purple} fillOpacity={1} fill="url(#colorLiters)" strokeWidth={4} />
-                </AreaChart>
-              </ResponsiveContainer>
             </div>
           </div>
         </div>
 
-        <div className="lg:col-span-4 flex flex-col gap-6">
-          <div className="glass-panel rounded-[2rem] flex-1 flex flex-col min-h-[400px] border-slate-800/40">
-            <div className="p-6 border-b border-slate-800/50 flex justify-between items-center">
-              <h2 className="text-[10px] font-black flex items-center gap-2 uppercase tracking-[0.3em] text-violet-400"><History size={16} /> Audit Timeline</h2>
-              <span className="text-[10px] bg-slate-800 px-3 py-1 rounded-full text-orange-400 font-bold border border-orange-500/20">{entries.length} Events</span>
+        {/* Right Column: History */}
+        <div className="lg:col-span-4 space-y-8">
+          <div className="glass rounded-[2.5rem] h-full flex flex-col max-h-[850px]">
+            <div className="p-6 border-b border-slate-800 flex justify-between items-center">
+              <h3 className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400 flex items-center gap-2">
+                <History size={14} /> Transaction Log
+              </h3>
+              <span className="text-[10px] bg-slate-800 text-orange-400 px-3 py-1 rounded-full font-bold">{entries.length}</span>
             </div>
-            <div className="overflow-y-auto max-h-[600px] lg:max-h-none flex-1 p-4 space-y-4 scrollbar-hide">
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 scrollbar-hide">
               {entries.length === 0 ? (
-                <div className="text-center py-24 text-slate-600 flex flex-col items-center gap-4">
-                  <div className="w-12 h-12 rounded-full border border-slate-800 flex items-center justify-center">
-                    <History size={20} />
-                  </div>
-                  <p className="text-xs font-medium uppercase tracking-widest">No transaction history</p>
+                <div className="text-center py-20 text-slate-600">
+                  <AlertCircle size={32} className="mx-auto mb-4 opacity-20" />
+                  <p className="text-xs uppercase tracking-widest font-bold">No data points yet</p>
                 </div>
               ) : (
-                [...entries].reverse().map(entry => <HistoryItem key={entry.id} entry={entry} onDelete={deleteEntry} />)
+                [...entries].reverse().map(entry => (
+                  <HistoryItem 
+                    key={entry.id} 
+                    entry={entry} 
+                    onDelete={(id) => setEntries(prev => prev.filter(e => e.id !== id))} 
+                  />
+                ))
               )}
             </div>
           </div>
         </div>
       </main>
 
+      {/* Entry Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-[100] flex items-end md:items-center justify-center p-0 md:p-6 animate-in fade-in duration-200">
+        <div className="fixed inset-0 z-[100] flex items-end md:items-center justify-center p-0 md:p-6 animate-in fade-in duration-300">
           <div className="absolute inset-0 bg-black/95 backdrop-blur-xl" onClick={() => setIsModalOpen(false)}></div>
-          <div className="relative w-full max-w-md bg-slate-900 border-t md:border border-slate-800 rounded-t-[2.5rem] md:rounded-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-300">
+          <div className="relative w-full max-w-md bg-slate-900 border-t md:border border-slate-800 rounded-t-[2.5rem] md:rounded-[2.5rem] shadow-2xl overflow-hidden animate-in slide-in-from-bottom duration-500">
             <div className="p-8">
-              <div className="flex justify-between items-center mb-10">
-                <h3 className="text-xl font-black flex items-center gap-3 tracking-tight">
+              <div className="flex justify-between items-center mb-8">
+                <h2 className="text-xl font-black flex items-center gap-3">
                   {modalType === EntryType.READING ? <Droplets className="text-violet-500" /> : <Truck className="text-orange-500" />}
-                  {modalType === EntryType.READING ? 'Log Tank Level' : 'Oil Delivery'}
-                </h3>
-                <button onClick={() => setIsModalOpen(false)} className="bg-slate-800/50 hover:bg-slate-800 p-2.5 rounded-full text-slate-400 transition-colors"><X size={20} /></button>
+                  {modalType === EntryType.READING ? 'Log Gauge Level' : 'Oil Delivery'}
+                </h2>
+                <button onClick={() => setIsModalOpen(false)} className="text-slate-500 hover:text-white p-2 transition-colors"><X size={24} /></button>
               </div>
+
               <div className="space-y-6">
                 <div>
-                  <label className="block text-[10px] font-black text-slate-500 mb-2 uppercase tracking-[0.2em]">Transaction Date</label>
-                  <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:border-violet-500/50 transition-colors" />
+                  <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Event Date</label>
+                  <input type="date" value={date} onChange={e => setDate(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-white focus:outline-none focus:border-violet-500/50 transition-colors" />
                 </div>
+
                 {modalType === EntryType.READING ? (
                   <div>
-                    <label className="block text-[10px] font-black text-slate-500 mb-2 uppercase tracking-[0.2em]">Dip Level (cm)</label>
+                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Dipstick Level (cm)</label>
                     <div className="relative">
-                      <input type="number" value={levelCm} placeholder="0" max={100} onChange={e => setLevelCm(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-5 py-5 text-4xl font-black text-white focus:outline-none focus:border-violet-500/50" />
-                      <span className="absolute right-6 top-1/2 -translate-y-1/2 text-slate-600 font-black text-sm">CM</span>
+                      <input type="number" placeholder="0.0" value={levelCm} onChange={e => setLevelCm(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-6 text-4xl font-black focus:outline-none focus:border-violet-500/50" />
+                      <span className="absolute right-6 top-1/2 -translate-y-1/2 font-black text-slate-700">CM</span>
                     </div>
                   </div>
                 ) : (
                   <>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <label className="block text-[10px] font-black text-slate-500 mb-2 uppercase tracking-[0.2em]">Liters</label>
-                        <input type="number" value={liters} placeholder="500" onChange={e => setLiters(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-5 py-4 text-white font-black focus:outline-none focus:border-orange-500/50" />
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Volume (L)</label>
+                        <input type="number" placeholder="500" value={liters} onChange={e => setLiters(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 font-black focus:outline-none" />
                       </div>
                       <div>
-                        <label className="block text-[10px] font-black text-slate-500 mb-2 uppercase tracking-[0.2em]">Cost £</label>
-                        <input type="number" value={cost} placeholder="0.00" onChange={e => setCost(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-5 py-4 text-white font-black focus:outline-none focus:border-orange-500/50" />
+                        <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Cost (£)</label>
+                        <input type="number" placeholder="0.00" value={cost} onChange={e => setCost(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 font-black focus:outline-none" />
                       </div>
                     </div>
                     <div>
-                      <label className="block text-[10px] font-black text-slate-500 mb-2 uppercase tracking-[0.2em]">Delivery Metadata</label>
-                      <textarea value={note} placeholder="Supplier details or notes..." onChange={e => setNote(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl px-5 py-4 text-white focus:outline-none focus:border-orange-500/50 h-28 resize-none text-sm" />
+                      <label className="block text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Delivery Notes</label>
+                      <textarea placeholder="Vendor name, batch quality, etc..." value={note} onChange={e => setNote(e.target.value)} className="w-full bg-slate-950 border border-slate-800 rounded-2xl p-4 text-sm h-24 resize-none focus:outline-none" />
                     </div>
                   </>
                 )}
+
                 <button 
-                  onClick={addEntry} 
-                  className={`w-full py-5 rounded-[1.5rem] font-black text-lg shadow-2xl transition-all active:scale-95 ${modalType === EntryType.READING ? 'bg-violet-600 shadow-violet-500/20' : 'bg-orange-600 shadow-orange-500/20'} text-white`}
+                  onClick={handleAddEntry}
+                  className={`w-full py-5 rounded-[1.5rem] font-black text-lg transition-all active:scale-95 shadow-xl ${modalType === EntryType.READING ? 'bg-violet-600 shadow-violet-900/40' : 'bg-orange-600 shadow-orange-900/40'} text-white`}
                 >
-                  Authorize Entry
+                  Save Entry
                 </button>
               </div>
             </div>
@@ -292,63 +307,61 @@ const App: React.FC = () => {
   );
 };
 
-const OilTank: React.FC<{ levelCm: number }> = ({ levelCm }) => {
-  const percentage = Math.min(100, Math.max(0, (levelCm / MAX_TANK_HEIGHT_CM) * 100));
+// Sub-components
+const StatCard = ({ label, value, sub, color, icon }: any) => (
+  <div className={`glass p-5 rounded-3xl ${color === 'purple' ? 'border-violet-500/10' : 'border-orange-500/10'}`}>
+    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center mb-4 ${color === 'purple' ? 'bg-violet-500/10 text-violet-400' : 'bg-orange-500/10 text-orange-400'}`}>{icon}</div>
+    <p className="text-[10px] font-black text-slate-500 uppercase tracking-wider">{label}</p>
+    <p className={`text-2xl font-black mt-1 ${color === 'purple' ? 'text-violet-400' : 'text-orange-400'}`}>{value}</p>
+    <p className="text-[9px] font-bold text-slate-600 uppercase mt-1 tracking-widest">{sub}</p>
+  </div>
+);
+
+const TankVisual = ({ levelCm }: { levelCm: number }) => {
+  const fill = Math.min(100, Math.max(0, (levelCm / MAX_TANK_HEIGHT_CM) * 100));
   return (
-    <div className="relative w-44 h-64 md:w-48 md:h-72">
-      <div className="absolute inset-0 bg-green-950/30 border-[8px] border-green-900/50 rounded-[3rem] overflow-hidden flex flex-col justify-end shadow-inner">
-        <div className="absolute inset-0 flex flex-col justify-between py-6 px-1 opacity-20 pointer-events-none">
-          {[...Array(9)].map((_, i) => <div key={i} className="w-full h-px bg-white/40"></div>)}
+    <div className="relative w-40 h-64">
+      <div className="absolute inset-0 bg-slate-900 border-[8px] border-slate-800 rounded-[3rem] overflow-hidden flex flex-col justify-end shadow-inner">
+        <div className="absolute inset-0 pointer-events-none opacity-20 flex flex-col justify-between py-6">
+          {[...Array(9)].map((_, i) => <div key={i} className="w-full h-px bg-white/30 mx-auto"></div>)}
         </div>
         <div 
-          className="bg-gradient-to-t from-green-600 to-green-400 w-full transition-all duration-1000 ease-in-out relative shadow-[0_-15px_40px_rgba(34,197,94,0.3)]" 
-          style={{ height: `${percentage}%` }}
+          className="bg-gradient-to-t from-green-600 via-green-500 to-green-400 w-full transition-all duration-1000 ease-in-out relative" 
+          style={{ height: `${fill}%` }}
         >
-          <div className="absolute top-0 left-0 w-full h-1 bg-white/50 blur-[2px]"></div>
+          <div className="absolute top-0 left-0 w-full h-1.5 bg-white/40 blur-[2px]"></div>
         </div>
       </div>
-      <div className="absolute -right-10 inset-y-0 flex flex-col justify-between text-[10px] text-slate-600 font-black py-8">
-        <span>100</span><span>80</span><span>60</span><span>40</span><span>20</span><span>0</span>
+      <div className="absolute -right-8 inset-y-0 flex flex-col justify-between text-[8px] font-black text-slate-700 py-8">
+        <span>120</span><span>90</span><span>60</span><span>30</span><span>0</span>
       </div>
     </div>
   );
 };
 
-const StatCard: React.FC<{ label: string, value: string, subValue: string, icon: React.ReactNode, color: 'purple' | 'orange' }> = ({ label, value, subValue, icon, color }) => (
-  <div className={`glass-panel p-5 rounded-3xl flex flex-col justify-between transition-transform hover:scale-[1.02] ${color === 'purple' ? 'border-violet-500/10' : 'border-orange-500/10'}`}>
-    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center mb-4 ${color === 'purple' ? 'bg-violet-500/10 text-violet-400' : 'bg-orange-500/10 text-orange-400'}`}>{icon}</div>
-    <div>
-      <p className="text-[10px] text-slate-500 font-black uppercase tracking-[0.2em]">{label}</p>
-      <p className={`text-2xl font-black mt-1 leading-none tracking-tight ${color === 'purple' ? 'text-violet-400' : 'text-orange-400'}`}>{value}</p>
-      <p className="text-[10px] text-slate-500 mt-2 font-medium">{subValue}</p>
-    </div>
-  </div>
-);
-
-const HistoryItem: React.FC<{ entry: OilEntry, onDelete: (id: string) => void }> = ({ entry, onDelete }) => (
-  <div className="p-5 bg-slate-900/40 border border-slate-800/40 rounded-[1.5rem] group hover:bg-slate-900/60 transition-all border-l-4 overflow-hidden" style={{ borderLeftColor: entry.type === EntryType.READING ? COLORS.purple : COLORS.orange }}>
+const HistoryItem = ({ entry, onDelete }: { entry: OilEntry, onDelete: (id: string) => void }) => (
+  <div className={`p-5 rounded-[1.5rem] bg-slate-900/50 border border-slate-800/50 group transition-all hover:bg-slate-900 border-l-4 ${entry.type === EntryType.READING ? 'border-l-violet-500' : 'border-l-orange-500'}`}>
     <div className="flex justify-between items-start mb-2">
-      <div className="flex items-center gap-4">
+      <div className="flex gap-4 items-center">
         <div className={`p-3 rounded-2xl ${entry.type === EntryType.READING ? 'bg-violet-500/10 text-violet-400' : 'bg-orange-500/10 text-orange-400'}`}>
-          {entry.type === EntryType.READING ? <Droplets size={16} /> : <Truck size={16} />}
+          {entry.type === EntryType.READING ? <Droplets size={16}/> : <Truck size={16}/>}
         </div>
         <div>
-          <p className="text-[10px] text-slate-500 font-black uppercase tracking-widest">{new Date(entry.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</p>
-          <p className="font-black text-slate-100 text-base mt-0.5">
-            {entry.type === EntryType.READING ? `${entry.levelCm}cm reading` : `Delivery of ${entry.liters}L`}
+          <p className="text-[10px] font-black text-slate-500 uppercase">{new Date(entry.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}</p>
+          <p className="text-sm font-black text-slate-200 mt-0.5">
+            {entry.type === EntryType.READING ? `${entry.levelCm}cm Level` : `${entry.liters}L Delivered`}
           </p>
         </div>
       </div>
-      <button onClick={() => onDelete(entry.id)} className="p-2 text-slate-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all hover:bg-red-500/10 rounded-lg"><Trash2 size={16} /></button>
+      <button onClick={() => onDelete(entry.id)} className="p-2 text-slate-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"><Trash2 size={16}/></button>
     </div>
     {(entry.cost || entry.note) && (
-      <div className="mt-4 pt-4 border-t border-slate-800/30 flex flex-col gap-2">
-        {entry.cost && <div className="text-orange-400 text-sm font-black flex items-center gap-2"><TrendingUp size={14}/> Total: £{entry.cost.toLocaleString()}</div>}
-        {entry.note && <p className="text-xs text-slate-400 italic font-medium leading-relaxed">"{entry.note}"</p>}
+      <div className="mt-4 pt-4 border-t border-slate-800/50 flex flex-col gap-2">
+        {entry.cost && <p className="text-xs font-black text-orange-400">Total Spent: £{entry.cost.toLocaleString()}</p>}
+        {entry.note && <p className="text-xs text-slate-500 italic font-medium leading-relaxed">"{entry.note}"</p>}
       </div>
     )}
   </div>
 );
 
 export default App;
-
