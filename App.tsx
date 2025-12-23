@@ -1,13 +1,3 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { LayoutDashboard, Droplets, Truck, History, Sparkles, TrendingUp, X, Trash2 } from 'lucide-react';
-import { 
-  AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
-} from 'recharts';
-import { OilEntry, EntryType, UsageStats } from './types';
-import { LITERS_PER_CM, STORAGE_KEY, COLORS } from './constants';
-import { getOilInsights } from './geminiService';
-
-const MAX_TANK_HEIGHT_CM = 100;
 
 const App: React.FC = () => {
   const [entries, setEntries] = useState<OilEntry[]>([]);
@@ -361,3 +351,4 @@ const HistoryItem: React.FC<{ entry: OilEntry, onDelete: (id: string) => void }>
 );
 
 export default App;
+
