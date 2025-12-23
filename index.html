@@ -15,17 +15,20 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
     <style>
+        /* Essential base styles to ensure background is correct even before JS loads */
         body {
             background-color: #020617;
             margin: 0;
             padding: 0;
-            overflow-x: hidden;
+            color: #f8fafc;
+            font-family: 'Inter', sans-serif;
         }
         #root {
             min-height: 100vh;
         }
-        /* Custom helper classes for enhanced glass-morphism */
+        /* Glassmorphism helpers that complement Tailwind */
         .glass-panel {
             background: rgba(15, 23, 42, 0.6);
             backdrop-filter: blur(12px);
