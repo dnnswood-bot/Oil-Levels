@@ -2,32 +2,32 @@ import { GoogleGenAI } from "@google/genai";
 import { OilEntry } from "./types";
 
 export const getOilInsights = async (entries: OilEntry[]) => {
-  if (entries.length < 2) return "Add more data points to unlock AI consumption insights.";
+  if (entries.length < 2) return "Insufficient history for analysis.";
   
-  // Mandatory: Use named parameter for apiKey
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
 
-  const historyStr = entries.map(e => 
-    `${e.date}: ${e.type} - ${e.liters}L${e.cost ? ` (Cost: £${e.cost})` : ''} ${e.note ? `Note: ${e.note}` : ''}`
+  const history = entries.map(e => 
+    `${e.date}: ${e.type} - ${e.liters}L${e.cost ? ` (£${e.cost})` : ''} ${e.note ? `[${e.note}]` : ''}`
   ).join('\n');
 
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
-      contents: `As a heating efficiency expert, analyze this oil usage history and provide 3 concise, actionable insights or predictions for the user. Keep it professional and technical.
+      contents: `You are a heating efficiency bot. Analyze this UK oil usage history and provide exactly 3 concise bullet points. 
+      Estimate when they will run out of oil based on current consumption.
+      Suggest if current prices (if provided) are good or bad compared to typical UK averages.
+      Conversion: 1cm height = 21 Liters.
       
       History:
-      ${historyStr}
-      
-      Conversion rate: 1cm = 21 Liters.`,
+      ${history}`,
       config: {
-        temperature: 0.7,
+        temperature: 0.5,
       }
     });
 
     return response.text;
   } catch (error) {
-    console.error("Gemini Insight Error:", error);
-    return "Insights are currently being generated based on your usage patterns.";
+    console.error("Insight error:", error);
+    return "Predictions will update as you add more readings.";
   }
 };
